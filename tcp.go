@@ -19,6 +19,8 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 )
 
 const (
@@ -46,9 +48,18 @@ type TCPHeader struct {
 }
 
 type TCPOption struct {
-	Kind   uint8
-	Length uint8
-	Data   []byte
+	Kind    uint8
+	Length  uint8
+	Data    []byte
+	SubType uint8
+	Version uint8
+	A       uint8
+	B       uint8
+	C       uint8
+	//D           uint8
+	H           uint8
+	SenderKey   uint64
+	ReceiverKey uint64
 }
 
 // Parse packet into TCPHeader structure
@@ -71,11 +82,72 @@ func NewTCPHeader(data []byte) *TCPHeader {
 	binary.Read(r, binary.BigEndian, &tcp.Checksum)
 	binary.Read(r, binary.BigEndian, &tcp.Urgent)
 
+	fmt.Println("DataOffset", tcp.DataOffset)
+	for {
+		option := NewOptions(r)
+		if option != nil {
+			tcp.Options = append(tcp.Options, *option)
+		} else {
+			break
+		}
+	}
 	return &tcp
+}
+
+func NewOptions(r *bytes.Reader) *TCPOption {
+	var option TCPOption
+	err := binary.Read(r, binary.BigEndian, &option.Kind)
+	if err == io.EOF {
+		return nil
+	}
+	binary.Read(r, binary.BigEndian, &option.Length)
+	fmt.Printf("Kind %v, Length %v, ", option.Kind, option.Length)
+	if option.Kind == 30 {
+		var mix uint8
+		binary.Read(r, binary.BigEndian, &mix)
+		option.SubType = byte(mix >> 4)
+		option.Version = byte(mix & 0xff)
+
+		binary.Read(r, binary.BigEndian, &mix)
+		option.A = byte(mix >> 7)
+		option.B = byte(mix >> 6 & 1)
+		option.C = byte(mix >> 5 & 1)
+		option.H = byte(mix & 1)
+		binary.Read(r, binary.BigEndian, &option.ReceiverKey)
+	} else {
+		option.Data = make([]byte, option.Length-2)
+		for i := 0; i < int(option.Length-2); i++ {
+			binary.Read(r, binary.BigEndian, &option.Data[i])
+		}
+	}
+
+	return &option
 }
 
 func (tcp *TCPHeader) HasFlag(flagBit byte) bool {
 	return tcp.Ctrl&flagBit != 0
+}
+
+func (option *TCPOption) Marshal(buf *bytes.Buffer) {
+
+	binary.Write(buf, binary.BigEndian, option.Kind)
+	if option.Length > 1 {
+		binary.Write(buf, binary.BigEndian, option.Length)
+		var mix uint8
+		mix = uint8(option.SubType<<4) | option.Version
+		binary.Write(buf, binary.BigEndian, mix)
+
+		mix = uint8(option.A<<7) |
+			uint8(option.B<<6) |
+			uint8(option.C<<5) |
+			uint8(option.H)
+
+		binary.Write(buf, binary.BigEndian, mix)
+		binary.Write(buf, binary.BigEndian, option.SenderKey)
+		if option.ReceiverKey != 0 {
+			binary.Write(buf, binary.BigEndian, option.ReceiverKey)
+		}
+	}
 }
 
 func (tcp *TCPHeader) Marshal() []byte {
@@ -98,15 +170,15 @@ func (tcp *TCPHeader) Marshal() []byte {
 	binary.Write(buf, binary.BigEndian, tcp.Urgent)
 
 	for _, option := range tcp.Options {
-		binary.Write(buf, binary.BigEndian, option.Kind)
-		if option.Length > 1 {
-			binary.Write(buf, binary.BigEndian, option.Length)
-			binary.Write(buf, binary.BigEndian, option.Data)
-		}
+		option.Marshal(buf)
+		// binary.Write(buf, binary.BigEndian, option.Kind)
+		// if option.Length > 1 {
+		// 	binary.Write(buf, binary.BigEndian, option.Length)
+		// 	//binary.Write(buf, binary.BigEndian, option.Data)
+		// }
 	}
 
 	out := buf.Bytes()
-
 	// Pad to min tcp header size, which is 20 bytes (5 32-bit words)
 	pad := 20 - len(out)
 	for i := 0; i < pad; i++ {

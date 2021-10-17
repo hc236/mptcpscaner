@@ -169,30 +169,38 @@ func printHelp() {
 }
 
 func sendSyn(laddr, raddr string, port uint16) time.Time {
-
+	option := TCPOption{
+		Kind: 30, Length: 12, SubType: 0, Version: 0, A: 1, B: 0, C: 0, H: 1, SenderKey: rand.Uint64(),
+	}
+	fmt.Println(option)
 	packet := TCPHeader{
 		Source:      0xaa47, // Random ephemeral port
 		Destination: port,
 		SeqNum:      rand.Uint32(),
 		AckNum:      0,
-		DataOffset:  5,      // 4 bits
+		DataOffset:  8,      // 4 bits
 		Reserved:    0,      // 3 bits
 		ECN:         0,      // 3 bits
 		Ctrl:        2,      // 6 bits (000010, SYN bit set)
 		Window:      0xaaaa, // The amount of data that it is able to accept in bytes
 		Checksum:    0,      // Kernel will set this if it's 0
 		Urgent:      0,
-		Options:     []TCPOption{},
+		Options:     []TCPOption{option},
 	}
 
 	data := packet.Marshal()
+	fmt.Println(laddr, raddr, len(data))
 	packet.Checksum = Csum(data, to4byte(laddr), to4byte(raddr))
-
+	fmt.Printf("Checksum 0x%x", packet.Checksum)
 	data = packet.Marshal()
 
-	//fmt.Printf("% x\n", data)
+	var dialer = &net.Dialer{
+		LocalAddr: &net.IPAddr{
+			IP: net.ParseIP(laddr),
+		},
+	}
 
-	conn, err := net.Dial("ip4:tcp", raddr)
+	conn, err := dialer.Dial("ip4:tcp", raddr)
 	if err != nil {
 		log.Fatalf("Dial: %s\n", err)
 	}
@@ -245,13 +253,17 @@ func receiveSynAck(localAddress, remoteAddress string) time.Time {
 			// this is not the packet we are looking for
 			continue
 		}
+		fmt.Println(numRead)
 		receiveTime = time.Now()
 		//fmt.Printf("Received: % x\n", buf[:numRead])
 		tcp := NewTCPHeader(buf[:numRead])
+		fmt.Printf("SYN:%v, ACK:%v\n", tcp.HasFlag(SYN), tcp.HasFlag(ACK))
+		fmt.Printf("Option: %v\n", tcp.Options)
 		// Closed port gets RST, open port gets SYN ACK
 		if tcp.HasFlag(RST) || (tcp.HasFlag(SYN) && tcp.HasFlag(ACK)) {
 			break
 		}
+
 	}
 	return receiveTime
 }
