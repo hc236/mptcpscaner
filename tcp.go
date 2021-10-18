@@ -19,7 +19,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 )
 
@@ -48,15 +47,14 @@ type TCPHeader struct {
 }
 
 type TCPOption struct {
-	Kind    uint8
-	Length  uint8
-	Data    []byte
-	SubType uint8
-	Version uint8
-	A       uint8
-	B       uint8
-	C       uint8
-	//D           uint8
+	Kind        uint8
+	Length      uint8
+	Data        []byte
+	SubType     uint8
+	Version     uint8
+	A           uint8
+	B           uint8
+	C           uint8
 	H           uint8
 	SenderKey   uint64
 	ReceiverKey uint64
@@ -82,7 +80,7 @@ func NewTCPHeader(data []byte) *TCPHeader {
 	binary.Read(r, binary.BigEndian, &tcp.Checksum)
 	binary.Read(r, binary.BigEndian, &tcp.Urgent)
 
-	fmt.Println("DataOffset", tcp.DataOffset)
+	//fmt.Println("DataOffset", tcp.DataOffset)
 	for {
 		option := NewOptions(r)
 		if option != nil {
@@ -101,7 +99,7 @@ func NewOptions(r *bytes.Reader) *TCPOption {
 		return nil
 	}
 	binary.Read(r, binary.BigEndian, &option.Length)
-	fmt.Printf("Kind %v, Length %v, ", option.Kind, option.Length)
+
 	if option.Kind == 30 {
 		var mix uint8
 		binary.Read(r, binary.BigEndian, &mix)

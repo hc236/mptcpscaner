@@ -17,8 +17,12 @@ For full license details see <http://www.gnu.org/licenses/>.
 package main
 
 import (
+	//"cmd/go/internal/version"
+	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/rand"
 	"net"
@@ -30,25 +34,24 @@ import (
 )
 
 var (
-	ifaceParam   = flag.String("i", "", "Interface (e.g. eth0, wlan1, etc)")
-	helpParam    = flag.Bool("h", false, "Print help")
-	portParam    = flag.Int("p", 80, "Port to test against (default 80)")
+	helpParam  = flag.Bool("h", false, "Print help")
+	ifaceParam = flag.String("i", "", "Interface (e.g. eth0, wlan1, etc)")
+	//portParam    = flag.Int("p", 80, "Port to test against (default 80)")
+	countParam   = flag.Int("c", 100, "Print help")
+	fileParam    = flag.String("f", "", "Host list file path")
+	outputParam  = flag.String("o", "", "Output flie path")
 	autoParam    = flag.Bool("a", false, "Measure latency to several well known addresses")
-	defaultHosts = map[string]string{
+	defaultHosts = []string{
 		// Busiest sites on the Internet, according to Wolfram Alpha
-		"Google":   "google.com",
-		"Facebook": "facebook.com",
-		"Baidu":    "baidu.com",
-
-		// Various locations, thanks Linode
-		"West Coast, USA": "speedtest.fremont.linode.com",
-		"East Coast, USA": "speedtest.newark.linode.com",
-		"London, UK":      "speedtest.london.linode.com",
-		"Tokyo, JP":       "speedtest.tokyo.linode.com",
-
-		// Other continents
-		"New Zealand":  "nzdsl.co.nz",
-		"South Africa": "speedtest.mybroadband.co.za",
+		"google.com",
+		"facebook.com",
+		"baidu.com",
+		"www.multipath-tcp.org",
+		"speedtest.fremont.linode.com",
+		"speedtest.newark.linode.com",
+		"speedtest.london.linode.com",
+		"nzdsl.co.nz",
+		"speedtest.mybroadband.co.za",
 	}
 )
 
@@ -70,12 +73,22 @@ func main() {
 		}
 	}
 
+	if *fileParam == "" {
+		fmt.Println("Missing host list file path.")
+		os.Exit(1)
+	}
+
+	if *outputParam == "" {
+		fmt.Println("Missing output file path.")
+		os.Exit(1)
+	}
+
 	localAddr := interfaceAddress(iface)
 	laddr := strings.Split(localAddr.String(), "/")[0] // Clean addresses like 192.168.1.30/24
 
-	port := uint16(*portParam)
+	//port := uint16(*portParam)
 	if *autoParam {
-		autoTest(laddr, port)
+		autoTest(laddr)
 		return
 	}
 
@@ -85,38 +98,87 @@ func main() {
 		os.Exit(1)
 	}
 
-	remoteHost := flag.Arg(0)
-	fmt.Println("Measuring round-trip latency from", laddr, "to", remoteHost, "on port", port)
-	fmt.Printf("Latency: %v\n", latency(laddr, remoteHost, port))
+	// remoteHost := flag.Arg(0)
+	//fmt.Println("= Measuring round-trip latency from", laddr, "to", remoteHost, "on port", port)
+	// duration, _ := latency(laddr, remoteHost, port)
+	// fmt.Printf("= Latency: %v\n", duration)
 }
 
-func autoTest(localAddr string, port uint16) {
-	for name, host := range defaultHosts {
-		fmt.Printf("%15s: %v\n", name, latency(localAddr, host, port))
-	}
-}
+func autoTest(localAddr string) {
+	filePath := *fileParam
+	count := *countParam
 
-func latency(localAddr string, remoteHost string, port uint16) time.Duration {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var receiveTime time.Time
-
-	addrs, err := net.LookupHost(remoteHost)
+	f, err := os.Open(filePath)
+	defer f.Close()
 	if err != nil {
-		log.Fatalf("Error resolving %s. %s\n", remoteHost, err)
+		log.Fatal(err)
+	}
+
+	rd := bufio.NewReader(f)
+
+	results := make([]Result, count)
+
+	//for i, host := range defaultHosts {
+	for i := 0; i < count; i++ {
+		line, _, _ := rd.ReadLine()
+		host := strings.Split(string(line), ",")[1]
+		result := latency(localAddr, host)
+		results[i] = result
+		//fmt.Printf("== %v: %v\n", host, duration)
+	}
+
+	data, _ := json.Marshal(results)
+
+	err = ioutil.WriteFile(*outputParam, data, 0644)
+	//fmt.Println(string(jsonString))
+}
+
+var ports = []uint16{80, 443}
+var versions = []uint8{0, 1}
+
+func latency(localAddr string, remoteHost string) Result {
+	addrs, err := net.LookupHost(remoteHost)
+	var result Result
+	result.Host = remoteHost
+	if err != nil {
+		return result
 	}
 	remoteAddr := addrs[0]
+	fmt.Printf("= %v <==> %v", remoteHost, remoteAddr)
+	result.Address = remoteAddr
+	result.PortResults = make([]PortResult, 2) //[2]PortResult{}
 
-	go func() {
-		receiveTime = receiveSynAck(localAddr, remoteAddr)
-		wg.Done()
-	}()
+	d := net.Dialer{Timeout: time.Duration(2) * time.Second}
+	for i, port := range ports {
+		var portResult = &result.PortResults[i]
+		portResult.Port = port
 
-	time.Sleep(1 * time.Millisecond)
-	sendTime := sendSyn(localAddr, remoteAddr, port)
+		var remoteaddr = fmt.Sprintf("%s:%d", remoteAddr, port)
+		conn, err := d.Dial("tcp", remoteaddr)
+		if conn != nil {
+			conn.Close()
+		}
+		if err != nil {
+			fmt.Printf(" %v unconnected \n", port)
+			continue
+		}
+		if i == 0 {
+			fmt.Println()
+		}
 
-	wg.Wait()
-	return receiveTime.Sub(sendTime)
+		portResult.TCPConnectable = true
+		portResult.MPTCPResults = make([]MPTCPResult, 2) //[2]MPTCPResult{}
+
+		for j, version := range versions {
+			duration, result := sendSyn(localAddr, remoteAddr, port, version)
+			fmt.Printf("== %v\n", duration)
+			portResult.MPTCPResults[j] = result
+		}
+	}
+
+	return result
+	// wg.Wait()
+	// return receiveTime.Sub(sendTime)
 }
 
 func chooseInterface() string {
@@ -132,7 +194,7 @@ func chooseInterface() string {
 		addrs, err := iface.Addrs()
 		// Skip if error getting addresses
 		if err != nil {
-			log.Println("Error get addresses for interfaces %s. %s", iface.Name, err)
+			log.Printf("Error get addresses for interfaces %s. %s\n", iface.Name, err)
 			continue
 		}
 
@@ -168,11 +230,10 @@ func printHelp() {
 	fmt.Println(help)
 }
 
-func sendSyn(laddr, raddr string, port uint16) time.Time {
+func sendSyn(laddr, raddr string, port uint16, version uint8) (time.Duration, MPTCPResult) {
 	option := TCPOption{
-		Kind: 30, Length: 12, SubType: 0, Version: 0, A: 1, B: 0, C: 0, H: 1, SenderKey: rand.Uint64(),
+		Kind: 30, Length: 12, SubType: 0, Version: version, A: 1, B: 0, C: 0, H: 1, SenderKey: rand.Uint64(),
 	}
-	fmt.Println(option)
 	packet := TCPHeader{
 		Source:      0xaa47, // Random ephemeral port
 		Destination: port,
@@ -188,10 +249,18 @@ func sendSyn(laddr, raddr string, port uint16) time.Time {
 		Options:     []TCPOption{option},
 	}
 
+	var receiveTime time.Time
+	var result MPTCPResult
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		receiveTime, result = receiveSynAck(laddr, raddr, packet.Source, packet.Destination, option.SenderKey, option.Version)
+		wg.Done()
+	}()
+	time.Sleep(1 * time.Millisecond)
+
 	data := packet.Marshal()
-	fmt.Println(laddr, raddr, len(data))
 	packet.Checksum = Csum(data, to4byte(laddr), to4byte(raddr))
-	fmt.Printf("Checksum 0x%x", packet.Checksum)
 	data = packet.Marshal()
 
 	var dialer = &net.Dialer{
@@ -208,16 +277,17 @@ func sendSyn(laddr, raddr string, port uint16) time.Time {
 	sendTime := time.Now()
 
 	numWrote, err := conn.Write(data)
+	fmt.Printf("> IP:%v, Source:%v, Dest:%v, Options:[Kind:%v, Version:%v, SenderKey:%v]\n", raddr, packet.Source, packet.Destination, option.Kind, option.Version, option.SenderKey)
+
 	if err != nil {
 		log.Fatalf("Write: %s\n", err)
 	}
 	if numWrote != len(data) {
 		log.Fatalf("Short write. Wrote %d/%d bytes\n", numWrote, len(data))
 	}
-
 	conn.Close()
-
-	return sendTime
+	wg.Wait()
+	return receiveTime.Sub(sendTime), result
 }
 
 func to4byte(addr string) [4]byte {
@@ -232,18 +302,57 @@ func to4byte(addr string) [4]byte {
 	return [4]byte{byte(b0), byte(b1), byte(b2), byte(b3)}
 }
 
-func receiveSynAck(localAddress, remoteAddress string) time.Time {
+type Result struct {
+	Host        string
+	Address     string
+	PortResults []PortResult
+}
+
+type PortResult struct {
+	Port           uint16
+	TCPConnectable bool
+	MPTCPResults   []MPTCPResult
+}
+
+type MPTCPResult struct {
+	SenderVersion   uint8
+	ReceiverVersion uint8
+	Flags           uint8
+
+	NoMPTCPOption    bool
+	WrongVersion     bool
+	WrongReceiverKey bool
+	RST              bool
+	SYNACK           bool
+	Timeout          bool
+}
+
+func receiveSynAck(localAddress, remoteAddress string, sourcePort, destPort uint16, senderKey uint64, version uint8) (time.Time, MPTCPResult) {
 	netaddr, err := net.ResolveIPAddr("ip4", localAddress)
 	if err != nil {
 		log.Fatalf("net.ResolveIPAddr: %s. %s\n", localAddress, netaddr)
 	}
 
 	conn, err := net.ListenIP("ip4:tcp", netaddr)
+	defer conn.Close()
 	if err != nil {
 		log.Fatalf("ListenIP: %s\n", err)
 	}
+
+	isTimeout := false
+	timer := time.AfterFunc(time.Duration(2)*time.Second, func() {
+		isTimeout = true
+	})
+	defer timer.Stop()
+
 	var receiveTime time.Time
+	var result MPTCPResult
+	result.SenderVersion = version
 	for {
+		if isTimeout {
+			result.Timeout = true
+			break
+		}
 		buf := make([]byte, 1024)
 		numRead, raddr, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -253,17 +362,49 @@ func receiveSynAck(localAddress, remoteAddress string) time.Time {
 			// this is not the packet we are looking for
 			continue
 		}
-		fmt.Println(numRead)
-		receiveTime = time.Now()
 		//fmt.Printf("Received: % x\n", buf[:numRead])
 		tcp := NewTCPHeader(buf[:numRead])
-		fmt.Printf("SYN:%v, ACK:%v\n", tcp.HasFlag(SYN), tcp.HasFlag(ACK))
-		fmt.Printf("Option: %v\n", tcp.Options)
-		// Closed port gets RST, open port gets SYN ACK
-		if tcp.HasFlag(RST) || (tcp.HasFlag(SYN) && tcp.HasFlag(ACK)) {
-			break
-		}
 
+		if tcp.Source != destPort || tcp.Destination != sourcePort {
+			continue
+		}
+		fmt.Printf("< IP:%v, Source:%v, Dest:%v, Options:", raddr, tcp.Source, tcp.Destination)
+
+		var mptcpOption *TCPOption = nil
+		for _, option := range tcp.Options {
+
+			if option.Kind == 30 {
+				mptcpOption = &option
+				fmt.Printf("[Kind:%v, Length:%v, Version:%v, ReceiverKey:%v]", option.Kind, option.Length, option.Version, option.ReceiverKey)
+			} else {
+				fmt.Printf("[Kind:%v, Length:%v]", option.Kind, option.Length)
+			}
+		}
+		fmt.Println()
+		if mptcpOption != nil {
+			result.ReceiverVersion = mptcpOption.Version
+			if mptcpOption.ReceiverKey == senderKey {
+				result.WrongReceiverKey = true
+				// Identical Receiver and SenderKey
+			}
+
+			if mptcpOption.Version > version {
+				result.WrongVersion = true
+				// Wrong version
+			}
+		} else {
+			result.NoMPTCPOption = true
+			// No MPTCP Option
+		}
+		receiveTime = time.Now()
+		result.Flags = tcp.Ctrl
+		if tcp.HasFlag(SYN) && tcp.HasFlag(ACK) {
+			result.SYNACK = true
+			// Open the connection
+		} else if tcp.HasFlag(RST) {
+			result.RST = true
+		}
+		break
 	}
-	return receiveTime
+	return receiveTime, result
 }
