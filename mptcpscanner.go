@@ -34,25 +34,11 @@ import (
 )
 
 var (
-	helpParam  = flag.Bool("h", false, "Print help")
-	ifaceParam = flag.String("i", "", "Interface (e.g. eth0, wlan1, etc)")
-	//portParam    = flag.Int("p", 80, "Port to test against (default 80)")
-	countParam   = flag.Int("c", 100, "Print help")
-	fileParam    = flag.String("f", "", "Host list file path")
-	outputParam  = flag.String("o", "", "Output flie path")
-	autoParam    = flag.Bool("a", false, "Measure latency to several well known addresses")
-	defaultHosts = []string{
-		// Busiest sites on the Internet, according to Wolfram Alpha
-		"google.com",
-		"facebook.com",
-		"baidu.com",
-		"www.multipath-tcp.org",
-		"speedtest.fremont.linode.com",
-		"speedtest.newark.linode.com",
-		"speedtest.london.linode.com",
-		"nzdsl.co.nz",
-		"speedtest.mybroadband.co.za",
-	}
+	helpParam   = flag.Bool("h", false, "Print help")
+	ifaceParam  = flag.String("i", "", "Interface (e.g. eth0, wlan1, etc)")
+	countParam  = flag.Int("c", 100, "The count of sites need to scan")
+	fileParam   = flag.String("f", "", "The file path of the site list")
+	outputParam = flag.String("o", "", "The flie path of output result")
 )
 
 func main() {
@@ -86,22 +72,9 @@ func main() {
 	localAddr := interfaceAddress(iface)
 	laddr := strings.Split(localAddr.String(), "/")[0] // Clean addresses like 192.168.1.30/24
 
-	//port := uint16(*portParam)
-	if *autoParam {
-		autoTest(laddr)
-		return
-	}
+	autoTest(laddr)
+	return
 
-	if len(flag.Args()) == 0 {
-		fmt.Println("Missing remote address")
-		printHelp()
-		os.Exit(1)
-	}
-
-	// remoteHost := flag.Arg(0)
-	//fmt.Println("= Measuring round-trip latency from", laddr, "to", remoteHost, "on port", port)
-	// duration, _ := latency(laddr, remoteHost, port)
-	// fmt.Printf("= Latency: %v\n", duration)
 }
 
 func autoTest(localAddr string) {
@@ -220,14 +193,15 @@ func interfaceAddress(ifaceName string) net.Addr {
 }
 
 func printHelp() {
-	help := `
-	USAGE: latency [-h] [-a] [-i iface] [-p port] <remote>
-	Where 'remote' is an ip address or host name.
-	Default port is 80
-	-h: Help
-	-a: Run auto test against several well known sites
-	`
-	fmt.Println(help)
+	// help := `
+	// USAGE: latency [-h] [-a] [-i iface] [-p port] <remote>
+	// Where 'remote' is an ip address or host name.
+	// Default port is 80
+	// -h: Help
+	// -a: Run auto test against several well known sites
+	// `
+	// fmt.Println(help)
+	flag.Usage()
 }
 
 func sendSyn(laddr, raddr string, port uint16, version uint8) (time.Duration, MPTCPResult) {

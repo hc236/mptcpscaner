@@ -1,21 +1,31 @@
-Install: `go get github.com/grahamking/latency`
+# mptcpscanner
 
-Run: `sudo latency [hostname]`.
+This project is a fork of [latency](https://github.com/grahamking/) that refers to it on how to craft TCP packets on golang.
 
-Example output:
+The mptcpscanner tool is implemented for checking the MPTCP availalbe sites on the Internet. It needs a Golang compiler to build it, and Linux and root permission to run. Using the following commands can build and run it:
 
-> $ sudo ./latency github.com
+```shell
+go build latency.go tcp.go 
+sudo ./latency -a -c 10000 -i eth0 -f 1000000.csv -o results.json
+```
 
-> Measuring round-trip latency from 192.168.1.26 to 192.30.252.131 on port 80
+And this the usage informant.
+```shell
+Usage of ./mptcpscanner:
+  -c int
+        The count of sites need to scan (default 100)
+  -f string
+        The file path of the site list
+  -h    Print help
+  -i string
+        Interface (e.g. eth0, wlan1, etc)
+  -o string
+        The flie path of output result
+```
 
-> Latency: 116.601914ms
-
-The `sudo` is needed to open a raw socket. If you know how to do this with capabilities, please do tell.
-
-`latency` can also run in _auto_ mode, where it tests a range of well known sites (which will be geo-balanced), and some servers in specific locations. It's fun, try it! `sudo latency -a`
-
-`latency` sends a TCP SYN packet (the opening of the three-way handshake) to a remote host on port 80. That host will respond with either a RST (if the port is closed), or a SYN/ACK (if the port is open). Either way, we time how long it takes between sending the SYN and receiving the response. That's your network latency.
-
-There are of course many other ways to measure this ([mtr](https://en.wikipedia.org/wiki/MTR_%28Software%29) is nice), but this is a fun exercise in using raw sockets and binary encoding in Go.
+The following command can be used to count the results of a scan that is implemented in NodeJs.
+```shell
+node stats.js
+```
 
 License: GPL.

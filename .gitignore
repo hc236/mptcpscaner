@@ -1,2 +1,4 @@
 latency
 .terraform
+workspace.code-workspace
+mptcpscanner
